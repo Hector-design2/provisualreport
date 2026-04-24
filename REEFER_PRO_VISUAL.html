@@ -1,166 +1,140 @@
 <!DOCTYPE html>
-<html lang="es">
+<html>
 <head>
-    <meta charset="utf-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>Reefer Pro Visual v4</title>
+    <meta charset='utf-8'>
+    <meta name='viewport' content='width=device-width, initial-scale=1.0'>
+    <title>Reefer Pro Visual v5</title>
 </head>
-<body style="margin:0; padding:10px; background:#f4f7f9; font-family:sans-serif; color:#333;">
-    <div style="max-width:800px; margin:auto;">
-        <div style="background:#fff; padding:15px; border-radius:12px; box-shadow:0 2px 10px rgba(0,0,0,0.05); margin-bottom:15px; display:flex; gap:10px;">
-            <input type="text" id="vSearch" placeholder="Buscar vehículo..." style="flex:1; padding:12px; border:1px solid #d1d5db; border-radius:8px; font-size:16px; outline:none;">
-            <button onclick="location.reload()" style="padding:10px 15px; background:#2563eb; color:white; border:none; border-radius:8px; font-weight:bold; cursor:pointer;">↻</button>
+<body style='margin:0;padding:10px;background:#f0f2f5;font-family:sans-serif;'>
+    <div style='max-width:900px;margin:auto;'>
+        <div style='background:#fff;padding:15px;border-radius:8px;box-shadow:0 2px 4px rgba(0,0,0,0.05);margin-bottom:15px;display:flex;gap:10px;align-items:center;'>
+            <input type='text' id='vSearch' placeholder='Filtrar vehículos...' style='flex:1;padding:10px;border:1px solid #ddd;border-radius:4px;outline:none;'>
+            <button onclick="location.reload()" style='padding:10px 15px;background:#3182ce;color:white;border:none;border-radius:4px;cursor:pointer;font-weight:bold;'>Refrescar</button>
         </div>
-
-        <div id="status" style="text-align:center; font-size:12px; color:#6b7280; margin-bottom:10px;">Conectando con termógrafos...</div>
-        <div id="container"></div>
+        <div id='container'></div>
+        <div id='status' style='text-align:center;font-size:11px;color:#94a3b8;margin-top:10px;'>Iniciando sistema...</div>
     </div>
 
-    <script>
-        var gApi;
-        var refreshInterval;
-        var targetGroups = [];
+<script>
+var gApi;
+var targetGroups = [];
 
-        geotab.addin.reeferProVisual = function () {
-            return {
-                initialize: function (api, state, callback) {
-                    gApi = api;
-                    setup();
-                    if (callback) callback();
-                },
-                focus: function () {
-                    setup();
-                    refreshInterval = setInterval(setup, 60000);
-                },
-                blur: function () {
-                    clearInterval(refreshInterval);
+// IMPORTANTE: El nombre reeferProVisual debe coincidir con el JSON
+geotab.addin.reeferProVisual = function() {
+    return {
+        initialize: function(api, state, callback) {
+            gApi = api;
+            setup();
+            if (callback) callback();
+        },
+        focus: function() {
+            setup();
+        },
+        blur: function() {
+            // Pausa si es necesario
+        }
+    };
+};
+
+function setup() {
+    document.getElementById('status').textContent = 'Buscando grupos "Cadena de frío"...';
+    gApi.call('Get', { typeName: 'Group' }, function(groups) {
+        targetGroups = groups.filter(g => /cadena de frío|cold chain/i.test(g.name)).map(g => g.id);
+        
+        gApi.call('Get', { typeName: 'Device' }, function(devs) {
+            var filtered = devs.filter(d => d.groups.some(dg => targetGroups.includes(dg.id)));
+            renderList(filtered);
+        });
+    });
+}
+
+function renderList(list) {
+    var cont = document.getElementById('container');
+    cont.innerHTML = '';
+    if(list.length === 0) {
+        document.getElementById('status').textContent = 'No se encontraron vehículos en el grupo de frío.';
+        return;
+    }
+    document.getElementById('status').textContent = 'Sincronizando ' + list.length + ' vehículos...';
+
+    list.forEach(function(d) {
+        var card = document.createElement('div');
+        card.style = 'background:#fff;border-radius:10px;margin-bottom:20px;padding:15px;border:1px solid #e1e4e8;box-shadow:0 4px 6px rgba(0,0,0,0.02);';
+        card.innerHTML = `
+            <div style="font-weight:bold;margin-bottom:12px;color:#2d3748;border-bottom:1px solid #eee;padding-bottom:10px;font-size:16px;">${d.name}</div>
+            <div id="truck_${d.id}" style="position:relative;width:100%;max-width:500px;margin:auto;">
+                <img src="https://github.com/Hector-design2/prueba-51/blob/main/Gemini_Generated_Image_d0rov6d0rov6d0ro%20(1)-no-bg.png?raw=true" style="width:100%;height:auto;display:block;">
+                <div id="no_data_${d.id}" style="position:absolute; top:40%; width:100%; text-align:center; color:#cbd5e0; font-size:10px;">Buscando sondas...</div>
+            </div>`;
+        cont.appendChild(card);
+        fetchDiagnostics(d.id);
+    });
+}
+
+function fetchDiagnostics(deviceId) {
+    // 1. Buscamos TODOS los diagnósticos que contengan "temperatura" para no dejarnos ninguno
+    gApi.call('Get', { typeName: 'Diagnostic', search: { name: '%temperatura%' } }, function(diags) {
+        // 2. Filtramos solo los que son de termógrafo o carga
+        var validDiags = diags.filter(dg => /termógrafo|carga/i.test(dg.name));
+        
+        validDiags.forEach(function(diag) {
+            // Buscamos el último dato de las últimas 2 horas
+            var twoHoursAgo = new Date(Date.now() - 120 * 60 * 1000).toISOString();
+            
+            gApi.call('Get', { 
+                typeName: 'StatusData', 
+                search: { deviceSearch: { id: deviceId }, diagnosticSearch: { id: diag.id }, fromDate: twoHoursAgo } 
+            }, function(data) {
+                if (data && data.length > 0) {
+                    var last = data[data.length - 1]; // El más reciente
+                    var val = parseFloat(last.data.toFixed(1));
+                    var diffMins = (new Date() - new Date(last.dateTime)) / 60000;
+
+                    // FILTRO: Solo mostramos si es menor a 20 mins y no es el error 333.3
+                    if (val !== 333.3 && diffMins <= 20) {
+                        var isZone2 = diag.name.includes('2');
+                        createBox(deviceId, isZone2 ? 2 : 1, val);
+                        fetchSetpoint(deviceId, isZone2 ? 2 : 1);
+                        // Quitamos el texto de "Buscando..."
+                        var msg = document.getElementById('no_data_'+deviceId);
+                        if(msg) msg.style.display = 'none';
+                    }
                 }
-            };
-        };
-
-        function setup() {
-            document.getElementById('status').textContent = "Buscando flota de frío...";
-            
-            gApi.call('Get', { typeName: 'Group' }, function (groups) {
-                targetGroups = groups.filter(g => 
-                    /cadena de frío|cold chain/i.test(g.name)
-                ).map(g => g.id);
-
-                if (targetGroups.length === 0) {
-                    document.getElementById('status').textContent = "Aviso: No se encontró el grupo 'Cadena de frío'";
-                }
-
-                gApi.call('Get', { typeName: 'Device' }, function (devs) {
-                    var filtered = devs.filter(d => 
-                        d.groups.some(dg => targetGroups.includes(dg.id))
-                    );
-                    render(filtered);
-                });
             });
-        }
+        });
+    });
+}
 
-        function render(list) {
-            var cont = document.getElementById('container');
-            var searchVal = document.getElementById('vSearch').value.toLowerCase();
-            cont.innerHTML = '';
-            
-            var displayList = list.filter(d => d.name.toLowerCase().includes(searchVal));
-            document.getElementById('status').textContent = "Monitorizando " + displayList.length + " vehículos en tiempo real";
+function createBox(devId, zone, val) {
+    var truck = document.getElementById('truck_' + devId);
+    var boxId = 'box_' + zone + '_' + devId;
+    if (!truck || document.getElementById(boxId)) return;
 
-            displayList.forEach(function (d) {
-                var card = document.createElement('div');
-                card.style = 'background:#fff; border-radius:15px; margin-bottom:20px; padding:15px; border:1px solid #e5e7eb; box-shadow:0 4px 6px rgba(0,0,0,0.02);';
-                
-                card.innerHTML = `
-                    <div style="font-weight:bold; margin-bottom:12px; color:#1f2937; font-size:16px;">${d.name}</div>
-                    <div id="truck_${d.id}" style="position:relative; width:100%; max-width:450px; margin:auto;">
-                        <img src="https://github.com/Hector-design2/prueba-51/blob/main/Gemini_Generated_Image_d0rov6d0rov6d0ro%20(1)-no-bg.png?raw=true" style="width:100%; display:block;">
-                    </div>
-                `;
-                cont.appendChild(card);
-                fetchData(d.id, d.name);
-            });
-        }
+    var color = zone === 1 ? '#48bb78' : '#4299e1';
+    var box = document.createElement('div');
+    box.id = boxId;
+    box.style = `position:absolute;top:26.5%;width:16%;background:rgba(255,255,255,0.96);border-radius:5px;text-align:center;padding:6px 2px;box-shadow:0 3px 8px rgba(0,0,0,0.18);z-index:10;border:1.2px solid ${color};left:${zone === 1 ? '32%' : '60%'};`;
+    
+    box.innerHTML = `
+        <div style="font-size:9px;color:#718096;font-weight:bold;">ZONA ${zone}</div>
+        <div style="font-size:16px;font-weight:bold;color:${color};">${val}°</div>
+        <div style="font-size:8px;color:#4a5568;border-top:1px solid #eee;margin-top:3px;padding-top:3px;">Set: <span id="sp_${zone}_${devId}">--</span>°</div>
+    `;
+    truck.appendChild(box);
+}
 
-        function fetchData(devId, devName) {
-            gApi.call('Get', { typeName: 'Diagnostic', search: { name: '%temperatura%' } }, function (diags) {
-                var termografos = diags.filter(dg => /termógrafo|carga/i.test(dg.name));
-                
-                termografos.forEach(function (diag) {
-                    // Pedimos datos de las últimas 2 horas para encontrar el ÚLTIMO registro real
-                    var twoHoursAgo = new Date(Date.now() - 2 * 3600000).toISOString();
-                    
-                    gApi.call('Get', { 
-                        typeName: 'StatusData', 
-                        search: { deviceSearch: { id: devId }, diagnosticSearch: { id: diag.id }, fromDate: twoHoursAgo } 
-                    }, function (data) {
-                        if (data && data.length > 0) {
-                            // Extraemos siempre el ÚLTIMO elemento del array (el más reciente)
-                            var lastRecord = data[data.length - 1];
-                            var now = new Date();
-                            var dataDate = new Date(lastRecord.dateTime);
-                            var diffMins = (now - dataDate) / 60000;
-                            var val = parseFloat(lastRecord.data.toFixed(1));
-
-                            console.log(`[${devName}] Sensor: ${diag.name} | Temp: ${val}° | Edad: ${diffMins.toFixed(1)} mins`);
-
-                            if (val === 333.3) {
-                                console.warn(`[${devName}] Ignorado: Error de sensor (333.3)`);
-                                return;
-                            }
-                            
-                            if (diffMins > 10) {
-                                console.warn(`[${devName}] Ignorado: Dato demasiado antiguo (${diffMins.toFixed(1)} min)`);
-                                return;
-                            }
-
-                            // Si pasa los filtros, dibujamos
-                            var zone = diag.name.includes('2') ? 2 : 1;
-                            drawTemp(devId, zone, val);
-                            fetchSetpoint(devId, zone);
-                        } else {
-                            console.log(`[${devName}] Sin datos en las últimas 2 horas para ${diag.name}`);
-                        }
-                    });
-                });
-            });
-        }
-
-        function drawTemp(devId, z, v) {
-            var truck = document.getElementById('truck_'+devId);
-            var bId = 'b_'+z+'_'+devId;
-            if (!truck || document.getElementById(bId)) return;
-
-            var color = z === 1 ? '#10b981' : '#3b82f6';
-            var box = document.createElement('div');
-            box.id = bId;
-            box.style = `position:absolute; top:26.5%; width:16%; background:rgba(255,255,255,0.95); border-radius:6px; text-align:center; padding:5px 2px; box-shadow:0 4px 10px rgba(0,0,0,0.15); border:1.5px solid ${color}; left:${z === 1 ? '32%' : '60%'}; z-index:10;`;
-            
-            box.innerHTML = `
-                <div style="font-size:9px; color:#6b7280; font-weight:800;">ZONA ${z}</div>
-                <div style="font-size:17px; font-weight:900; color:${color};">${v}°</div>
-                <div style="font-size:8px; color:#9ca3af; border-top:1px solid #f3f4f6; margin-top:4px; padding-top:4px;">Set: <span id="sp_${z}_${devId}" style="font-weight:bold; color:#6b7280;">--</span>°</div>
-            `;
-            truck.appendChild(box);
-        }
-
-        function fetchSetpoint(devId, z) {
-            gApi.call('Get', { typeName: 'Diagnostic', search: { name: '%consigna%' + z + '%' } }, function (diags) {
-                if (diags.length > 0) {
-                    var twoHoursAgo = new Date(Date.now() - 2 * 3600000).toISOString();
-                    gApi.call('Get', { 
-                        typeName: 'StatusData', 
-                        search: { deviceSearch: { id: devId }, diagnosticSearch: { id: diags[0].id }, fromDate: twoHoursAgo } 
-                    }, function (data) {
-                        if (data && data.length > 0) {
-                            var lastRecord = data[data.length - 1];
-                            var el = document.getElementById('sp_' + z + '_' + devId);
-                            if (el) el.textContent = lastRecord.data.toFixed(0);
-                        }
-                    });
+function fetchSetpoint(devId, zone) {
+    gApi.call('Get', { typeName: 'Diagnostic', search: { name: '%consigna%' + zone + '%' } }, function(diags) {
+        if (diags.length > 0) {
+            gApi.call('Get', { typeName: 'StatusData', search: { deviceSearch: { id: devId }, diagnosticSearch: { id: diags[0].id }, resultsLimit: 1 } }, function(data) {
+                if (data && data.length > 0) {
+                    var el = document.getElementById('sp_' + zone + '_' + devId);
+                    if (el) el.textContent = data[0].data.toFixed(0);
                 }
             });
         }
-    </script>
+    });
+}
+</script>
 </body>
 </html>
