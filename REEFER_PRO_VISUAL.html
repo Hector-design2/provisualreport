@@ -1,161 +1,119 @@
 <!DOCTYPE html>
-<html>
+<html lang="es">
 <head>
-    <meta charset='utf-8'>
-    <meta name='viewport' content='width=device-width, initial-scale=1.0'>
-    <title>Reefer Pro Visual v6</title>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Reefer Pro Visual V5</title>
 </head>
-<body style='margin:0;padding:10px;background:#f0f2f5;font-family:sans-serif;'>
-    <div style='max-width:900px;margin:auto;'>
-        <div style='background:#fff;padding:15px;border-radius:8px;box-shadow:0 2px 4px rgba(0,0,0,0.05);margin-bottom:15px;display:flex;gap:10px;align-items:center;'>
-            <input type='text' id='vSearch' placeholder='Filtrar vehículos...' style='flex:1;padding:10px;border:1px solid #ddd;border-radius:4px;'>
-            <button onclick="location.reload()" style='padding:10px 15px;background:#3182ce;color:white;border:none;border-radius:4px;font-weight:bold;cursor:pointer;'>Refrescar</button>
+<body style="margin:0; padding:10px; background:#f4f7f9; font-family:sans-serif;">
+    <div style="max-width:800px; margin:auto;">
+        <div id="debug" style="background:#2d3748; color:#fff; padding:10px; border-radius:8px; font-size:11px; margin-bottom:15px; border-left:5px solid #48bb78;">
+            <b>Estado:</b> <span id="statusMsg">Iniciando...</span> | 
+            <b>Vehículos:</b> <span id="countMsg">0</span>
         </div>
 
-        <div id='monitor' style='font-size:11px; background:#fff; padding:10px; border-radius:5px; margin-bottom:10px; border-left:4px solid #3182ce; color:#4a5568;'>
-            Cargando Add-in...
-        </div>
-
-        <div id='container'></div>
+        <div id="container"></div>
     </div>
 
-<script>
-var gApi;
-var targetGroupIds = [];
-
-// Configuración del Add-in
-geotab.addin.reeferProVisual = function() {
-    return {
-        initialize: function(api, state, callback) {
-            gApi = api;
-            updateMonitor("API Conectada. Buscando flota...");
-            setup();
-            if (callback) callback();
-        },
-        focus: function() { setup(); }
-    };
-};
-
-function updateMonitor(msg) {
-    document.getElementById('monitor').textContent = msg;
-}
-
-function setup() {
-    // 1. Buscamos grupos que contengan "frío" o "cold" o "cadena"
-    gApi.call('Get', { typeName: 'Group' }, function(groups) {
-        targetGroupIds = groups.filter(g => 
-            /frio|frío|cold|cadena|reefer/i.test(g.name)
-        ).map(g => g.id);
+    <script>
+        var gApi;
         
-        if (targetGroupIds.length === 0) {
-            updateMonitor("Aviso: No se encontró un grupo con nombre 'Frío' o 'Cadena'. Mostrando todos.");
-        }
+        // 1. DEFINICIÓN DEL ADD-IN (Debe estar al principio)
+        geotab.addin.reeferProVisual = function () {
+            return {
+                initialize: function (api, state, callback) {
+                    gApi = api;
+                    document.getElementById('statusMsg').textContent = "Conectado a Geotab";
+                    setup();
+                    if (callback) callback();
+                },
+                focus: function () { setup(); },
+                blur: function () { }
+            };
+        };
 
-        // 2. Buscamos los vehículos
-        gApi.call('Get', { typeName: 'Device' }, function(devices) {
-            var filtered = (targetGroupIds.length > 0) 
-                ? devices.filter(d => d.groups.some(dg => targetGroupIds.includes(dg.id)))
-                : devices;
+        function setup() {
+            // Buscamos grupos que contengan "frío" o "cold"
+            gApi.call('Get', { typeName: 'Group' }, function (groups) {
+                var groupIds = groups.filter(g => /frio|frío|cold|cadena/i.test(g.name)).map(g => g.id);
+                
+                gApi.call('Get', { typeName: 'Device' }, function (devs) {
+                    // Si no hay grupos, mostramos todos para asegurar que el HTML funciona
+                    var filtered = (groupIds.length > 0) 
+                        ? devs.filter(d => d.groups.some(dg => groupIds.includes(dg.id)))
+                        : devs;
 
-            updateMonitor("Encontrados " + filtered.length + " vehículos de frío.");
-            renderVehicles(filtered);
-        });
-    });
-}
-
-function renderVehicles(list) {
-    var container = document.getElementById('container');
-    container.innerHTML = '';
-    
-    list.forEach(function(d) {
-        var card = document.createElement('div');
-        card.style = 'background:#fff;border-radius:10px;margin-bottom:20px;padding:15px;border:1px solid #e1e4e8;box-shadow:0 4px 6px rgba(0,0,0,0.02);';
-        card.innerHTML = `
-            <div style="font-weight:bold;margin-bottom:12px;color:#2d3748;border-bottom:1px solid #eee;padding-bottom:10px;font-size:16px;">${d.name}</div>
-            <div id="truck_${d.id}" style="position:relative;width:100%;max-width:500px;margin:auto;">
-                <img src="https://github.com/Hector-design2/prueba-51/blob/main/Gemini_Generated_Image_d0rov6d0rov6d0ro%20(1)-no-bg.png?raw=true" style="width:100%;height:auto;display:block;">
-                <div id="loader_${d.id}" style="position:absolute; top:40%; width:100%; text-align:center; color:#cbd5e0; font-size:10px;">Buscando datos...</div>
-            </div>`;
-        container.appendChild(card);
-        fetchDataForDevice(d.id);
-    });
-}
-
-function fetchDataForDevice(deviceId) {
-    // BUSQUEDA MAESTRA: Buscamos CUALQUIER cosa que se llame "Temperatura"
-    gApi.call('Get', { 
-        typeName: 'Diagnostic', 
-        search: { name: '%temperatura%' } 
-    }, function(diags) {
-        // Solo nos interesan los que tengan "termógrafo", "carga", "sonda" o "zona"
-        var validDiags = diags.filter(dg => /termógrafo|carga|sonda|zona/i.test(dg.name));
-        
-        validDiags.forEach(function(diag) {
-            // Buscamos el último dato (sin límite de tiempo al principio para probar si llegan)
-            gApi.call('Get', { 
-                typeName: 'StatusData', 
-                search: { 
-                    deviceSearch: { id: deviceId }, 
-                    diagnosticSearch: { id: diag.id },
-                    resultsLimit: 1 
-                } 
-            }, function(data) {
-                if (data && data.length > 0) {
-                    var val = parseFloat(data[0].data.toFixed(1));
-                    var dataDate = new Date(data[0].dateTime);
-                    var diffMins = (new Date() - dataDate) / 60000;
-
-                    // FILTRO: No error 333.3 y máximo 30 minutos de antigüedad
-                    if (val !== 333.3 && diffMins <= 30) {
-                        // Identificar Zona 1 o Zona 2
-                        var zone = (diag.name.includes('2') || diag.name.toLowerCase().includes('zona b')) ? 2 : 1;
-                        drawBox(deviceId, zone, val);
-                        
-                        // Ocultar el texto de "Buscando..."
-                        var loader = document.getElementById('loader_' + deviceId);
-                        if (loader) loader.style.display = 'none';
-                        
-                        // Buscar Setpoint (Consigna)
-                        fetchSetpoint(deviceId, zone);
-                    }
-                }
-            });
-        });
-    });
-}
-
-function drawBox(devId, zone, val) {
-    var truck = document.getElementById('truck_' + devId);
-    var boxId = 'box_' + zone + '_' + devId;
-    if (!truck || document.getElementById(boxId)) return;
-
-    var color = zone === 1 ? '#48bb78' : '#4299e1';
-    var leftPos = zone === 1 ? '32%' : '60%';
-    
-    var box = document.createElement('div');
-    box.id = boxId;
-    box.style = `position:absolute;top:26.5%;width:16%;background:rgba(255,255,255,0.96);border-radius:5px;text-align:center;padding:6px 2px;box-shadow:0 3px 8px rgba(0,0,0,0.18);z-index:10;border:1.2px solid ${color};left:${leftPos};`;
-    
-    box.innerHTML = `
-        <div style="font-size:9px;color:#718096;font-weight:bold;">ZONA ${zone}</div>
-        <div style="font-size:16px;font-weight:bold;color:${color};">${val}°</div>
-        <div style="font-size:8px;color:#4a5568;border-top:1px solid #eee;margin-top:3px;padding-top:3px;">Set: <span id="sp_${zone}_${devId}">--</span>°</div>
-    `;
-    truck.appendChild(box);
-}
-
-function fetchSetpoint(devId, zone) {
-    gApi.call('Get', { typeName: 'Diagnostic', search: { name: '%consigna%' + zone + '%' } }, function(diags) {
-        if (diags.length > 0) {
-            gApi.call('Get', { typeName: 'StatusData', search: { deviceSearch: { id: devId }, diagnosticSearch: { id: diags[0].id }, resultsLimit: 1 } }, function(data) {
-                if (data && data.length > 0) {
-                    var el = document.getElementById('sp_' + zone + '_' + devId);
-                    if (el) el.textContent = data[0].data.toFixed(0);
-                }
+                    document.getElementById('countMsg').textContent = filtered.length;
+                    document.getElementById('statusMsg').textContent = "Buscando temperaturas...";
+                    render(filtered);
+                });
             });
         }
-    });
-}
-</script>
+
+        function render(list) {
+            var cont = document.getElementById('container');
+            cont.innerHTML = '';
+            
+            list.forEach(function (d) {
+                var card = document.createElement('div');
+                card.style = 'background:#fff; border-radius:12px; margin-bottom:20px; padding:15px; box-shadow:0 2px 8px rgba(0,0,0,0.1); border:1px solid #e2e8f0;';
+                card.innerHTML = `
+                    <div style="font-weight:bold; color:#2d3748; margin-bottom:10px; border-bottom:1px solid #edf2f7; padding-bottom:5px;">${d.name}</div>
+                    <div id="truck_${d.id}" style="position:relative; width:100%; max-width:450px; margin:auto;">
+                        <img src="https://github.com/Hector-design2/prueba-51/blob/main/Gemini_Generated_Image_d0rov6d0rov6d0ro%20(1)-no-bg.png?raw=true" style="width:100%; display:block;">
+                        <div id="searching_${d.id}" style="position:absolute; top:45%; width:100%; text-align:center; font-size:10px; color:#cbd5e0;">Buscando sondas...</div>
+                    </div>
+                `;
+                cont.appendChild(card);
+                fetchTemps(d.id);
+            });
+        }
+
+        function fetchTemps(devId) {
+            // Buscamos diagnósticos de temperatura
+            gApi.call('Get', { typeName: 'Diagnostic', search: { name: '%temperatura%' } }, function (diags) {
+                // Filtramos solo los que parecen de carga o termógrafo
+                var valid = diags.filter(dg => /termógrafo|carga|sonda|zona/i.test(dg.name));
+                
+                valid.forEach(function (diag) {
+                    // Pedimos el último dato (resultsLimit: 1)
+                    gApi.call('Get', { 
+                        typeName: 'StatusData', 
+                        search: { deviceSearch: { id: devId }, diagnosticSearch: { id: diag.id }, resultsLimit: 1 } 
+                    }, function (data) {
+                        if (data && data.length > 0) {
+                            var val = parseFloat(data[0].data.toFixed(1));
+                            var diffMins = (new Date() - new Date(data[0].dateTime)) / 60000;
+
+                            // Filtro: Si el dato tiene menos de 45 min y no es error 333.3, lo pintamos
+                            if (val !== 333.3 && diffMins < 45) {
+                                var zone = (diag.name.includes('2') || diag.name.toLowerCase().includes('b')) ? 2 : 1;
+                                drawBox(devId, zone, val);
+                                if(document.getElementById('searching_'+devId)) document.getElementById('searching_'+devId).style.display = 'none';
+                            }
+                        }
+                    });
+                });
+            });
+        }
+
+        function drawBox(devId, z, v) {
+            var truck = document.getElementById('truck_'+devId);
+            var bId = 'box_'+z+'_'+devId;
+            if (!truck || document.getElementById(bId)) return;
+
+            var color = z === 1 ? '#48bb78' : '#4299e1';
+            var box = document.createElement('div');
+            box.id = bId;
+            box.style = `position:absolute; top:26.5%; width:16%; background:#fff; border-radius:5px; text-align:center; padding:5px 2px; box-shadow:0 4px 6px rgba(0,0,0,0.1); border:1.5px solid ${color}; left:${z === 1 ? '32%' : '60%'}; z-index:10;`;
+            
+            box.innerHTML = `
+                <div style="font-size:8px; color:#718096; font-weight:bold;">ZONA ${z}</div>
+                <div style="font-size:15px; font-weight:bold; color:${color};">${v}°</div>
+                <div style="font-size:7px; color:#a0aec0; border-top:1px solid #f7fafc; margin-top:3px; padding-top:3px;">REAL TIME</div>
+            `;
+            truck.appendChild(box);
+        }
+    </script>
 </body>
 </html>
