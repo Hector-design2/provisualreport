@@ -7,11 +7,11 @@
 <body style='margin:0;padding:10px;background:#f0f2f5;font-family:sans-serif;'>
     <div style='max-width:900px;margin:auto;'>
         <div style='background:#fff;padding:15px;border-radius:8px;box-shadow:0 2px 4px rgba(0,0,0,0.05);margin-bottom:15px;display:flex;gap:10px;align-items:center;'>
-            <input type='text' id='vSearch' placeholder='Filtrar vehículos...' style='flex:1;padding:10px;border:1px solid #ddd;border-radius:4px;outline:none;'>
+            <input type='text' id='vSearch' placeholder='Filtrar por nombre...' style='flex:1;padding:10px;border:1px solid #ddd;border-radius:4px;outline:none;'>
             <button onclick="location.reload()" style='padding:10px 15px;background:#3182ce;color:white;border:none;border-radius:4px;cursor:pointer;font-weight:bold;'>Refrescar</button>
         </div>
         <div id='container'></div>
-        <div id='lastRefresh' style='text-align:center;font-size:11px;color:#94a3b8;margin-top:10px;'>Cargando telemetría...</div>
+        <div id='lastRefresh' style='text-align:center;font-size:11px;color:#94a3b8;margin-top:10px;'>Filtrando cadena de frío...</div>
     </div>
 
 <script>
@@ -27,21 +27,27 @@ geotab.addin.reeferProVisual = function() {
 };
 
 function setup(callback) {
-    // 1. Buscamos los grupos de frío
+    // 1. Recuperamos primero los grupos para encontrar el de "Frio"
     gApi.call('Get', { 
-        typeName: 'Group',
-        search: { name: '%frio%' } 
+        typeName: 'Group' 
     }, function(groups) {
-        var groupIds = groups.map(g => ({ id: g.id }));
+        // Buscamos cualquier grupo que se llame "Frio" (ignora mayúsculas/minúsculas)
+        var grupoFrio = groups.find(g => g.name && g.name.toLowerCase().includes("frio"));
         
-        // 2. Buscamos los vehículos
+        var searchCriteria = {};
+        if (grupoFrio) {
+            console.log("Filtrando por grupo:", grupoFrio.name);
+            searchCriteria = { groups: [{ id: grupoFrio.id }] };
+        }
+
+        // 2. Buscamos solo los vehículos de ese grupo
         gApi.call('Get', { 
             typeName: 'Device',
-            search: groupIds.length > 0 ? { groups: groupIds } : {}
+            search: searchCriteria
         }, function(devices) {
             allDevices = devices;
             renderList(allDevices);
-            document.getElementById('lastRefresh').textContent = 'Última actualización: ' + new Date().toLocaleTimeString();
+            document.getElementById('lastRefresh').textContent = 'Cadena de Frío - Actualizado: ' + new Date().toLocaleTimeString();
             if (callback) callback();
         });
     });
@@ -57,7 +63,6 @@ function renderList(list) {
             <div style="font-weight:bold;margin-bottom:12px;color:#2d3748;border-bottom:1px solid #eee;padding-bottom:10px;">${d.name}</div>
             <div id="truck_${d.id}" style="position:relative;width:100%;max-width:450px;margin:auto;">
                 <img src="https://github.com/Hector-design2/prueba-51/blob/main/Gemini_Generated_Image_d0rov6d0rov6d0ro%20(1)-no-bg.png?raw=true" style="width:100%;height:auto;display:block;">
-                <div id="loading_${d.id}" style="position:absolute;top:40%;left:40%;font-size:10px;color:#cbd5e0;">Buscando sondas...</div>
             </div>`;
         container.appendChild(card);
         fetchDeviceTemps(d.id);
@@ -65,45 +70,39 @@ function renderList(list) {
 }
 
 function fetchDeviceTemps(devId) {
-    // Buscamos datos de los últimos 40 min para asegurar que no mostramos datos viejos
     gApi.call('Get', {
         typeName: 'StatusData',
         search: {
             deviceSearch: { id: devId },
-            fromDate: new Date(Date.now() - 40 * 60 * 1000).toISOString(),
-            resultsLimit: 50
+            fromDate: new Date(Date.now() - 45 * 60 * 1000).toISOString(),
+            resultsLimit: 100
         }
     }, function(data) {
         if (data && data.length > 0) {
             data.forEach(function(record) {
-                gApi.call('Get', {
-                    typeName: 'Diagnostic',
-                    search: { id: record.diagnostic.id }
-                }, function(diag) {
-                    var name = diag[0].name.toLowerCase();
-                    var val = record.data.toFixed(1);
-                    
-                    // Prioridad 1: Termógrafos (Lo que vimos en tu API Runner)
-                    // Prioridad 2: Zonas de carga
-                    if (name.includes("termógrafo 1") || name.includes("carga 1")) {
-                        updateUI(devId, 1, val);
-                    } else if (name.includes("termógrafo 2") || name.includes("carga 2")) {
-                        updateUI(devId, 2, val);
-                    }
-                });
+                // Filtramos por los IDs que descubrimos en el API Runner
+                var diagId = record.diagnostic.id;
+                var val = record.data.toFixed(1);
+                
+                // Mapeo directo por IDs de diagnóstico para mayor velocidad
+                if (diagId === "ThermographTemperature1Id" || diagId === "DiagnosticCargoTemperatureZone1Id") {
+                    updateUI(devId, 1, val);
+                } else if (diagId === "ThermographTemperature2Id" || diagId === "DiagnosticCargoTemperatureZone2Id") {
+                    updateUI(devId, 2, val);
+                }
             });
         }
     });
 }
 
 function updateUI(devId, zone, val) {
-    var loading = document.getElementById(`loading_${devId}`);
-    if (loading) loading.remove();
-
     var truck = document.getElementById('truck_' + devId);
     var boxId = `box_${zone}_${devId}`;
-    if (document.getElementById(boxId)) {
-        document.getElementById(boxId).querySelector('.temp-val').textContent = val + '°';
+    
+    // Si ya existe la caja, solo actualizamos el valor
+    var existingBox = document.getElementById(boxId);
+    if (existingBox) {
+        existingBox.querySelector('.temp-val').textContent = val + '°';
         return;
     }
 
@@ -120,7 +119,7 @@ function updateUI(devId, zone, val) {
     truck.appendChild(box);
 }
 
-// Filtro de búsqueda
+// Filtro de búsqueda por texto
 document.getElementById('vSearch').addEventListener('input', function(e) {
     var term = e.target.value.toLowerCase();
     var cards = document.getElementById('container').children;
