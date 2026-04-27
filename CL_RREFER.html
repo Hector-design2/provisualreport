@@ -1,0 +1,406 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset='utf-8'>
+    <meta name='viewport' content='width=device-width, initial-scale=1.0'>
+</head>
+<body style='margin:0;padding:10px;background:#f0f2f5;font-family:sans-serif;'>
+    <div style='max-width:900px;margin:auto;'>
+        <div style='background:#fff;padding:15px;border-radius:8px;box-shadow:0 2px 4px rgba(0,0,0,0.05);margin-bottom:15px;display:flex;gap:10px;align-items:center;'>
+            <input type='text' id='vSearch' placeholder='Filtrar por nombre...' style='flex:1;padding:10px;border:1px solid #ddd;border-radius:4px;outline:none;'>
+            <button onclick="location.reload()" style='padding:10px 15px;background:#3182ce;color:white;border:none;border-radius:4px;cursor:pointer;font-weight:bold;'>Refrescar</button>
+        </div>
+        <div id='container'></div>
+        <div id='lastRefresh' style='text-align:center;font-size:11px;color:#94a3b8;margin-top:10px;'>Buscando grupos de frío...</div>
+    </div>
+
+<!-- Chart.js desde CDN (compatible con ES5, no necesita bundler) -->
+<script src='https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js'></script>
+
+<script>
+var gApi, allDevices = [];
+
+// Almacenamiento de datos históricos por dispositivo para los gráficos
+// Estructura: historyData[devId] = { zone1: [{t, v},...], zone2: [{t, v},...] }
+var historyData = {};
+
+// Referencia a instancias Chart.js por dispositivo para poder destruirlas al re-render
+var chartInstances = {};
+
+geotab.addin.reeferProVisual = function() {
+    return {
+        initialize: function(api, state, callback) {
+            gApi = api;
+            setup(callback);
+        }
+    };
+};
+
+function setup(callback) {
+    gApi.call('Get', {
+        typeName: 'Group'
+    }, function(groups) {
+        var gruposFiltrados = groups.filter(function(g) {
+            var n = (g.name || '').toLowerCase();
+            return n.indexOf('frio') > -1 || n.indexOf('frío') > -1 || n.indexOf('cadena') > -1 || n.indexOf('cold') > -1;
+        });
+
+        if (gruposFiltrados.length > 0) {
+            console.log('Grupos encontrados:', gruposFiltrados.map(function(g) { return g.name; }));
+
+            var searchGroups = gruposFiltrados.map(function(g) { return { id: g.id }; });
+
+            gApi.call('Get', {
+                typeName: 'Device',
+                search: { groups: searchGroups }
+            }, function(devices) {
+                allDevices = devices;
+                renderList(allDevices);
+                finishSetup(callback);
+            });
+        } else {
+            console.error('No se encontró ningún grupo que coincida con los criterios.');
+            document.getElementById('lastRefresh').textContent = 'Error: No se encontró el grupo de frío.';
+            if (callback) callback();
+        }
+    });
+}
+
+function finishSetup(callback) {
+    document.getElementById('lastRefresh').textContent = 'Filtro: Cadena de Frío - ' + new Date().toLocaleTimeString();
+    if (callback) callback();
+}
+
+function renderList(list) {
+    var container = document.getElementById('container');
+    container.innerHTML = '';
+
+    if (list.length === 0) {
+        container.innerHTML = '<div style="text-align:center;padding:20px;color:#666;">No hay vehículos en los grupos de frío.</div>';
+        return;
+    }
+
+    list.forEach(function(d) {
+        var card = document.createElement('div');
+        card.style.cssText = 'background:#fff;border-radius:10px;margin-bottom:20px;padding:15px;border:1px solid #e1e4e8;box-shadow:0 4px 6px rgba(0,0,0,0.02);';
+
+        // ── Cabecera: nombre + timestamps de temperatura ──
+        var header = document.createElement('div');
+        header.style.cssText = 'display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;border-bottom:1px solid #eee;padding-bottom:10px;flex-wrap:wrap;gap:6px;';
+
+        var nameEl = document.createElement('div');
+        nameEl.style.cssText = 'font-weight:bold;color:#2d3748;font-size:15px;';
+        nameEl.textContent = d.name;
+
+        // Contenedor de timestamps (se rellena cuando llegan los datos)
+        var tsEl = document.createElement('div');
+        tsEl.id = 'ts_' + d.id;
+        tsEl.style.cssText = 'font-size:11px;color:#718096;display:flex;gap:12px;';
+        tsEl.innerHTML = '<span style="color:#bbb;">Cargando temperaturas...</span>';
+
+        header.appendChild(nameEl);
+        header.appendChild(tsEl);
+        card.appendChild(header);
+
+        // ── Visual del camión ──
+        var truckWrap = document.createElement('div');
+        truckWrap.id = 'truck_' + d.id;
+        truckWrap.style.cssText = 'position:relative;width:100%;max-width:450px;margin:auto;';
+        truckWrap.innerHTML = '<img src="https://github.com/Hector-design2/prueba-51/blob/main/Gemini_Generated_Image_d0rov6d0rov6d0ro%20(1)-no-bg.png?raw=true" style="width:100%;height:auto;display:block;">';
+        card.appendChild(truckWrap);
+
+        // ── Separador ──
+        var sep = document.createElement('div');
+        sep.style.cssText = 'border-top:1px solid #f0f2f5;margin:14px 0 10px;';
+        card.appendChild(sep);
+
+        // ── Título gráfico ──
+        var chartTitle = document.createElement('div');
+        chartTitle.style.cssText = 'font-size:12px;font-weight:600;color:#4a5568;margin-bottom:6px;';
+        chartTitle.textContent = 'Temperaturas últimas 12 h';
+        card.appendChild(chartTitle);
+
+        // ── Canvas del gráfico ──
+        var canvasWrap = document.createElement('div');
+        canvasWrap.style.cssText = 'position:relative;height:180px;';
+        var canvas = document.createElement('canvas');
+        canvas.id = 'chart_' + d.id;
+        canvasWrap.appendChild(canvas);
+        card.appendChild(canvasWrap);
+
+        container.appendChild(card);
+
+        // Inicializamos historial vacío para este dispositivo
+        historyData[d.id] = { zone1: [], zone2: [] };
+
+        // Lanzamos las dos peticiones en paralelo
+        fetchDeviceTemps(d.id);        // última hora (para el overlay del camión)
+        fetchDeviceHistory(d.id);      // 12 horas (para el gráfico)
+    });
+}
+
+// ── Fetch datos recientes (1h) → overlay camión + timestamps ──────────────────
+function fetchDeviceTemps(devId) {
+    gApi.call('Get', {
+        typeName: 'StatusData',
+        search: {
+            deviceSearch: { id: devId },
+            fromDate: new Date(Date.now() - 60 * 60 * 1000).toISOString(),
+            resultsLimit: 200
+        }
+    }, function(data) {
+        if (data && data.length > 0) {
+            // Guardamos el dato más reciente por zona para el timestamp
+            var latestZ1 = null, latestZ2 = null;
+
+            data.forEach(function(record) {
+                var diagId = record.diagnostic.id;
+                var val = record.data;
+                var dt = new Date(record.dateTime);
+
+                if (diagId === 'ThermographTemperature1Id' || diagId === 'DiagnosticCargoTemperatureZone1Id') {
+                    if (!latestZ1 || dt > latestZ1.dt) {
+                        latestZ1 = { val: val, dt: dt };
+                    }
+                    updateUI(devId, 1, val.toFixed(1));
+                } else if (diagId === 'ThermographTemperature2Id' || diagId === 'DiagnosticCargoTemperatureZone2Id') {
+                    if (!latestZ2 || dt > latestZ2.dt) {
+                        latestZ2 = { val: val, dt: dt };
+                    }
+                    updateUI(devId, 2, val.toFixed(1));
+                }
+            });
+
+            // Actualizamos el bloque de timestamps en el header
+            updateTimestamps(devId, latestZ1, latestZ2);
+        } else {
+            updateTimestamps(devId, null, null);
+        }
+    });
+}
+
+// ── Actualiza los timestamps en el header de la tarjeta ───────────────────────
+function updateTimestamps(devId, z1, z2) {
+    var tsEl = document.getElementById('ts_' + devId);
+    if (!tsEl) return;
+
+    var html = '';
+    if (z1) {
+        html += '<span style="display:flex;align-items:center;gap:4px;">'
+              + '<span style="width:10px;height:10px;border-radius:50%;background:#48bb78;display:inline-block;"></span>'
+              + '<strong style="color:#2d3748;">Z1:</strong>&nbsp;'
+              + z1.val.toFixed(1) + '°C'
+              + '&nbsp;<span style="color:#a0aec0;">' + formatTime(z1.dt) + '</span>'
+              + '</span>';
+    }
+    if (z2) {
+        html += '<span style="display:flex;align-items:center;gap:4px;">'
+              + '<span style="width:10px;height:10px;border-radius:50%;background:#4299e1;display:inline-block;"></span>'
+              + '<strong style="color:#2d3748;">Z2:</strong>&nbsp;'
+              + z2.val.toFixed(1) + '°C'
+              + '&nbsp;<span style="color:#a0aec0;">' + formatTime(z2.dt) + '</span>'
+              + '</span>';
+    }
+    if (!html) {
+        html = '<span style="color:#bbb;">Sin datos recientes</span>';
+    }
+    tsEl.innerHTML = html;
+}
+
+function formatTime(dt) {
+    var h = dt.getHours().toString();
+    var m = dt.getMinutes().toString();
+    if (h.length < 2) h = '0' + h;
+    if (m.length < 2) m = '0' + m;
+    return h + ':' + m;
+}
+
+// ── Fetch historial 12h → gráfico ────────────────────────────────────────────
+function fetchDeviceHistory(devId) {
+    var from12h = new Date(Date.now() - 12 * 60 * 60 * 1000);
+
+    gApi.call('Get', {
+        typeName: 'StatusData',
+        search: {
+            deviceSearch: { id: devId },
+            fromDate: from12h.toISOString(),
+            toDate: new Date().toISOString(),
+            resultsLimit: 5000
+        }
+    }, function(data) {
+        var zone1Points = [];
+        var zone2Points = [];
+
+        if (data && data.length > 0) {
+            data.forEach(function(record) {
+                var diagId = record.diagnostic.id;
+                var val = parseFloat(record.data);
+                var dt = new Date(record.dateTime);
+
+                if (diagId === 'ThermographTemperature1Id' || diagId === 'DiagnosticCargoTemperatureZone1Id') {
+                    zone1Points.push({ x: dt, y: val });
+                } else if (diagId === 'ThermographTemperature2Id' || diagId === 'DiagnosticCargoTemperatureZone2Id') {
+                    zone2Points.push({ x: dt, y: val });
+                }
+            });
+
+            // Ordenar por tiempo ascendente
+            zone1Points.sort(function(a, b) { return a.x - b.x; });
+            zone2Points.sort(function(a, b) { return a.x - b.x; });
+        }
+
+        historyData[devId] = { zone1: zone1Points, zone2: zone2Points };
+        renderChart(devId);
+    });
+}
+
+// ── Renderiza el gráfico Chart.js ─────────────────────────────────────────────
+function renderChart(devId) {
+    var canvas = document.getElementById('chart_' + devId);
+    if (!canvas) return;
+
+    // Destruir instancia previa si existe
+    if (chartInstances[devId]) {
+        chartInstances[devId].destroy();
+        delete chartInstances[devId];
+    }
+
+    var z1 = historyData[devId].zone1;
+    var z2 = historyData[devId].zone2;
+
+    var noData = z1.length === 0 && z2.length === 0;
+    if (noData) {
+        var ctx2 = canvas.getContext('2d');
+        ctx2.fillStyle = '#a0aec0';
+        ctx2.font = '13px sans-serif';
+        ctx2.textAlign = 'center';
+        ctx2.fillText('Sin datos de temperatura en las últimas 12 h', canvas.width / 2, 90);
+        return;
+    }
+
+    var ctx = canvas.getContext('2d');
+
+    var datasets = [];
+
+    if (z1.length > 0) {
+        datasets.push({
+            label: 'Zona 1',
+            data: z1,
+            borderColor: '#48bb78',
+            backgroundColor: 'rgba(72,187,120,0.10)',
+            borderWidth: 2,
+            pointRadius: 0,
+            pointHoverRadius: 4,
+            tension: 0.3,
+            fill: true
+        });
+    }
+
+    if (z2.length > 0) {
+        datasets.push({
+            label: 'Zona 2',
+            data: z2,
+            borderColor: '#4299e1',
+            backgroundColor: 'rgba(66,153,225,0.10)',
+            borderWidth: 2,
+            pointRadius: 0,
+            pointHoverRadius: 4,
+            tension: 0.3,
+            fill: true
+        });
+    }
+
+    chartInstances[devId] = new Chart(ctx, {
+        type: 'line',
+        data: { datasets: datasets },
+        options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            animation: { duration: 400 },
+            interaction: { mode: 'index', intersect: false },
+            plugins: {
+                legend: {
+                    position: 'top',
+                    labels: { font: { size: 11 }, boxWidth: 12, padding: 10 }
+                },
+                tooltip: {
+                    callbacks: {
+                        title: function(items) {
+                            if (!items.length) return '';
+                            var d = new Date(items[0].parsed.x);
+                            var hh = d.getHours().toString();
+                            var mm = d.getMinutes().toString();
+                            if (hh.length < 2) hh = '0' + hh;
+                            if (mm.length < 2) mm = '0' + mm;
+                            return hh + ':' + mm + '  ' + d.toLocaleDateString();
+                        },
+                        label: function(item) {
+                            return item.dataset.label + ': ' + item.parsed.y.toFixed(1) + ' °C';
+                        }
+                    }
+                }
+            },
+            scales: {
+                x: {
+                    type: 'time',
+                    time: {
+                        unit: 'hour',
+                        displayFormats: { hour: 'HH:mm' }
+                    },
+                    min: new Date(Date.now() - 12 * 60 * 60 * 1000).toISOString(),
+                    max: new Date().toISOString(),
+                    ticks: {
+                        font: { size: 10 },
+                        maxRotation: 0,
+                        color: '#718096'
+                    },
+                    grid: { color: 'rgba(0,0,0,0.04)' }
+                },
+                y: {
+                    ticks: {
+                        font: { size: 10 },
+                        color: '#718096',
+                        callback: function(v) { return v + '°C'; }
+                    },
+                    grid: { color: 'rgba(0,0,0,0.04)' }
+                }
+            }
+        }
+    });
+}
+
+// ── Overlay del camión (igual que antes, sin cambios) ─────────────────────────
+function updateUI(devId, zone, val) {
+    var truck = document.getElementById('truck_' + devId);
+    if (!truck) return;
+
+    var boxId = 'box_' + zone + '_' + devId;
+    var existingBox = document.getElementById(boxId);
+    if (existingBox) {
+        existingBox.querySelector('.temp-val').textContent = val + '°';
+        return;
+    }
+
+    var color = zone === 1 ? '#48bb78' : '#4299e1';
+    var leftPos = zone === 1 ? '32%' : '60%';
+
+    var box = document.createElement('div');
+    box.id = boxId;
+    box.style.cssText = 'position:absolute;top:26.5%;width:16%;background:white;border-radius:5px;text-align:center;padding:5px 2px;box-shadow:0 2px 5px rgba(0,0,0,0.2);z-index:10;border:1.5px solid ' + color + ';left:' + leftPos + ';';
+    box.innerHTML = '<div style="font-size:8px;color:#718096;font-weight:bold;">ZONA ' + zone + '</div>'
+                  + '<div class="temp-val" style="font-size:15px;font-weight:bold;color:' + color + ';">' + val + '°</div>';
+    truck.appendChild(box);
+}
+
+// ── Filtro de búsqueda (sin cambios) ─────────────────────────────────────────
+document.getElementById('vSearch').addEventListener('input', function(e) {
+    var term = e.target.value.toLowerCase();
+    var cards = document.getElementById('container').children;
+    for (var i = 0; i < cards.length; i++) {
+        var name = cards[i].innerText.toLowerCase();
+        cards[i].style.display = name.indexOf(term) > -1 ? 'block' : 'none';
+    }
+});
+</script>
+</body>
+</html>
