@@ -11,7 +11,7 @@
             <button onclick="location.reload()" style='padding:10px 15px;background:#3182ce;color:white;border:none;border-radius:4px;cursor:pointer;font-weight:bold;'>Refrescar</button>
         </div>
         <div id='container'></div>
-        <div id='lastRefresh' style='text-align:center;font-size:11px;color:#94a3b8;margin-top:10px;'>Cargando flota de frío...</div>
+        <div id='lastRefresh' style='text-align:center;font-size:11px;color:#94a3b8;margin-top:10px;'>Filtrando cadena de frío...</div>
     </div>
 
 <script>
@@ -27,47 +27,35 @@ geotab.addin.reeferProVisual = function() {
 };
 
 function setup(callback) {
-    // 1. Buscamos TODOS los grupos para identificar el de Frío de forma segura
+    // 1. Recuperamos primero los grupos para encontrar el de "Frio"
     gApi.call('Get', { 
         typeName: 'Group' 
     }, function(groups) {
-        // Buscamos el grupo que contenga "frio" o "frío"
-        var grupoFrio = groups.find(g => {
-            var n = (g.name || "").toLowerCase();
-            return n.includes("frio") || n.includes("frío");
-        });
+        // Buscamos cualquier grupo que se llame "Frio" (ignora mayúsculas/minúsculas)
+        var grupoFrio = groups.find(g => g.name && g.name.toLowerCase().includes("frio"));
         
+        var searchCriteria = {};
         if (grupoFrio) {
-            console.log("Grupo detectado:", grupoFrio.name, "ID:", grupoFrio.id);
-            // 2. Si lo encontramos, pedimos solo los vehículos de ESE grupo
-            gApi.call('Get', { 
-                typeName: 'Device',
-                search: { groups: [{ id: grupoFrio.id }] }
-            }, function(devices) {
-                allDevices = devices;
-                renderList(allDevices);
-                finishSetup(callback);
-            });
-        } else {
-            console.error("No se encontró ningún grupo con la palabra 'Frio'");
-            document.getElementById('lastRefresh').textContent = "Error: No se encontró el grupo 'Frio'";
-            if (callback) callback();
+            console.log("Filtrando por grupo:", grupoFrio.name);
+            searchCriteria = { groups: [{ id: grupoFrio.id }] };
         }
-    });
-}
 
-function finishSetup(callback) {
-    document.getElementById('lastRefresh').textContent = 'Cadena de Frío - Actualizado: ' + new Date().toLocaleTimeString();
-    if (callback) callback();
+        // 2. Buscamos solo los vehículos de ese grupo
+        gApi.call('Get', { 
+            typeName: 'Device',
+            search: searchCriteria
+        }, function(devices) {
+            allDevices = devices;
+            renderList(allDevices);
+            document.getElementById('lastRefresh').textContent = 'Cadena de Frío - Actualizado: ' + new Date().toLocaleTimeString();
+            if (callback) callback();
+        });
+    });
 }
 
 function renderList(list) {
     var container = document.getElementById('container');
     container.innerHTML = '';
-    if (list.length === 0) {
-        container.innerHTML = '<div style="text-align:center;padding:20px;color:#666;">No hay vehículos en este grupo.</div>';
-        return;
-    }
     list.forEach(function(d) {
         var card = document.createElement('div');
         card.style = 'background:#fff;border-radius:10px;margin-bottom:20px;padding:15px;border:1px solid #e1e4e8;box-shadow:0 4px 6px rgba(0,0,0,0.02);';
@@ -86,16 +74,17 @@ function fetchDeviceTemps(devId) {
         typeName: 'StatusData',
         search: {
             deviceSearch: { id: devId },
-            fromDate: new Date(Date.now() - 60 * 60 * 1000).toISOString(), // Extendemos a 1 hora por seguridad
-            resultsLimit: 200
+            fromDate: new Date(Date.now() - 45 * 60 * 1000).toISOString(),
+            resultsLimit: 100
         }
     }, function(data) {
         if (data && data.length > 0) {
             data.forEach(function(record) {
+                // Filtramos por los IDs que descubrimos en el API Runner
                 var diagId = record.diagnostic.id;
                 var val = record.data.toFixed(1);
                 
-                // Usamos los IDs detectados en el API Runner
+                // Mapeo directo por IDs de diagnóstico para mayor velocidad
                 if (diagId === "ThermographTemperature1Id" || diagId === "DiagnosticCargoTemperatureZone1Id") {
                     updateUI(devId, 1, val);
                 } else if (diagId === "ThermographTemperature2Id" || diagId === "DiagnosticCargoTemperatureZone2Id") {
@@ -108,9 +97,9 @@ function fetchDeviceTemps(devId) {
 
 function updateUI(devId, zone, val) {
     var truck = document.getElementById('truck_' + devId);
-    if (!truck) return;
-    
     var boxId = `box_${zone}_${devId}`;
+    
+    // Si ya existe la caja, solo actualizamos el valor
     var existingBox = document.getElementById(boxId);
     if (existingBox) {
         existingBox.querySelector('.temp-val').textContent = val + '°';
@@ -130,11 +119,12 @@ function updateUI(devId, zone, val) {
     truck.appendChild(box);
 }
 
+// Filtro de búsqueda por texto
 document.getElementById('vSearch').addEventListener('input', function(e) {
     var term = e.target.value.toLowerCase();
     var cards = document.getElementById('container').children;
     for (var i = 0; i < cards.length; i++) {
-        var name = cards[i].innerText.toLowerCase();
+        var name = cards[i].firstElementChild.textContent.toLowerCase();
         cards[i].style.display = name.includes(term) ? 'block' : 'none';
     }
 });
