@@ -66,11 +66,6 @@ function renderList(list) {
     var container = document.getElementById('container');
     container.innerHTML = '';
 
-    if (list.length === 0) {
-        container.innerHTML = '<div style="text-align:center;padding:20px;color:#666;">No hay vehículos en los grupos de frío.</div>';
-        return;
-    }
-
     list.forEach(function(d) {
         var card = document.createElement('div');
         card.style.cssText = 'background:#fff;border-radius:10px;margin-bottom:20px;padding:15px;border:1px solid #e1e4e8;box-shadow:0 4px 6px rgba(0,0,0,0.02);';
@@ -145,8 +140,6 @@ function fetchDeviceTemps(devId) {
                 }
             });
             updateTimestamps(devId, latestZ1, latestZ2);
-        } else {
-            updateTimestamps(devId, null, null);
         }
     });
 }
@@ -156,28 +149,12 @@ function updateTimestamps(devId, z1, z2) {
     if (!tsEl) return;
     var html = '';
     if (z1) {
-        html += '<span style="display:flex;align-items:center;gap:4px;">'
-              + '<span style="width:10px;height:10px;border-radius:50%;background:#48bb78;display:inline-block;"></span>'
-              + '<strong style="color:#2d3748;">Z1:</strong>&nbsp;'
-              + z1.val.toFixed(1) + '°C'
-              + '&nbsp;<span style="color:#a0aec0;">' + formatTime(z1.dt) + '</span>'
-              + '</span>';
+        html += '<span style="display:flex;align-items:center;gap:4px;"><span style="width:10px;height:10px;border-radius:50%;background:#48bb78;display:inline-block;"></span><strong>Z1:</strong> ' + z1.val.toFixed(1) + '°C</span>';
     }
     if (z2) {
-        html += '<span style="display:flex;align-items:center;gap:4px;">'
-              + '<span style="width:10px;height:10px;border-radius:50%;background:#4299e1;display:inline-block;"></span>'
-              + '<strong style="color:#2d3748;">Z2:</strong>&nbsp;'
-              + z2.val.toFixed(1) + '°C'
-              + '&nbsp;<span style="color:#a0aec0;">' + formatTime(z2.dt) + '</span>'
-              + '</span>';
+        html += '<span style="display:flex;align-items:center;gap:4px;"><span style="width:10px;height:10px;border-radius:50%;background:#4299e1;display:inline-block;"></span><strong>Z2:</strong> ' + z2.val.toFixed(1) + '°C</span>';
     }
-    tsEl.innerHTML = html || '<span style="color:#bbb;">Sin datos recientes</span>';
-}
-
-function formatTime(dt) {
-    var h = dt.getHours().toString().padStart(2, '0');
-    var m = dt.getMinutes().toString().padStart(2, '0');
-    return h + ':' + m;
+    tsEl.innerHTML = html || '<span style="color:#bbb;">Sin datos</span>';
 }
 
 function fetchDeviceHistory(devId) {
@@ -191,23 +168,17 @@ function fetchDeviceHistory(devId) {
             resultsLimit: 5000
         }
     }, function(data) {
-        var zone1Points = [];
-        var zone2Points = [];
-        if (data && data.length > 0) {
-            data.forEach(function(record) {
-                var diagId = record.diagnostic.id;
-                var val = parseFloat(record.data);
-                var dt = new Date(record.dateTime);
-                if (diagId === 'ThermographTemperature1Id' || diagId === 'DiagnosticCargoTemperatureZone1Id') {
-                    zone1Points.push({ x: dt, y: val });
-                } else if (diagId === 'ThermographTemperature2Id' || diagId === 'DiagnosticCargoTemperatureZone2Id') {
-                    zone2Points.push({ x: dt, y: val });
-                }
+        var z1p = [], z2p = [];
+        if (data) {
+            data.forEach(function(r) {
+                var dId = r.diagnostic.id;
+                var v = parseFloat(r.data);
+                var t = new Date(r.dateTime);
+                if (dId === 'ThermographTemperature1Id' || dId === 'DiagnosticCargoTemperatureZone1Id') z1p.push({ x: t, y: v });
+                else if (dId === 'ThermographTemperature2Id' || dId === 'DiagnosticCargoTemperatureZone2Id') z2p.push({ x: t, y: v });
             });
-            zone1Points.sort(function(a, b) { return a.x - b.x; });
-            zone2Points.sort(function(a, b) { return a.x - b.x; });
         }
-        historyData[devId] = { zone1: zone1Points, zone2: zone2Points };
+        historyData[devId] = { zone1: z1p, zone2: z2p };
         renderChart(devId);
     });
 }
@@ -215,62 +186,36 @@ function fetchDeviceHistory(devId) {
 function renderChart(devId) {
     var canvas = document.getElementById('chart_' + devId);
     if (!canvas) return;
-    if (chartInstances[devId]) { chartInstances[devId].destroy(); delete chartInstances[devId]; }
+    if (chartInstances[devId]) chartInstances[devId].destroy();
 
     var z1 = historyData[devId].zone1;
     var z2 = historyData[devId].zone2;
 
-    if (z1.length === 0 && z2.length === 0) {
-        var ctx2 = canvas.getContext('2d');
-        ctx2.fillStyle = '#a0aec0';
-        ctx2.font = '13px sans-serif';
-        ctx2.textAlign = 'center';
-        ctx2.fillText('Sin datos de temperatura en las últimas 12 h', canvas.width / 2, 90);
-        return;
-    }
-
-    var ctx = canvas.getContext('2d');
-    var datasets = [];
-
-    if (z1.length > 0) {
-        datasets.push({
-            label: 'Zona 1',
-            data: z1,
-            borderColor: '#48bb78',
-            backgroundColor: 'rgba(72,187,120,0.10)',
-            borderWidth: 2,
-            pointRadius: 0,
-            tension: 0.3,
-            fill: true
-        });
-    }
-
-    if (z2.length > 0) {
-        datasets.push({
-            label: 'Zona 2',
-            data: z2,
-            borderColor: '#4299e1',
-            backgroundColor: 'rgba(66,153,225,0.10)',
-            borderWidth: 2,
-            pointRadius: 0,
-            tension: 0.3,
-            fill: true
-        });
-    }
-
-    chartInstances[devId] = new Chart(ctx, {
+    chartInstances[devId] = new Chart(canvas.getContext('2d'), {
         type: 'line',
-        data: { datasets: datasets },
+        data: {
+            datasets: [
+                { label: 'Zona 1', data: z1, borderColor: '#48bb78', backgroundColor: 'rgba(72,187,120,0.1)', fill: true, pointRadius: 0, tension: 0.3 },
+                { label: 'Zona 2', data: z2, borderColor: '#4299e1', backgroundColor: 'rgba(66,153,225,0.1)', fill: true, pointRadius: 0, tension: 0.3 }
+            ]
+        },
         options: {
             responsive: true,
             maintainAspectRatio: false,
+            // --- CONFIGURACIÓN DE INTERACCIÓN SOLICITADA ---
+            interaction: {
+                mode: 'index',     // Activa todos los puntos del mismo eje X
+                intersect: false,  // Permite detectar puntos sin tocarlos exactamente
+                axis: 'x'          // Prioriza la detección en el eje horizontal
+            },
             plugins: {
-                legend: { position: 'top', labels: { font: { size: 11 }, boxWidth: 12 } },
+                legend: { display: true, position: 'top', labels: { boxWidth: 10, font: { size: 10 } } },
                 tooltip: {
+                    enabled: true,
+                    padding: 10,
                     callbacks: {
                         title: function(items) {
-                            var d = new Date(items[0].parsed.x);
-                            return d.getHours().toString().padStart(2, '0') + ':' + d.getMinutes().toString().padStart(2, '0');
+                            return new Date(items[0].parsed.x).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
                         }
                     }
                 }
@@ -281,10 +226,12 @@ function renderChart(devId) {
                     time: { unit: 'hour', displayFormats: { hour: 'HH:mm' } },
                     min: new Date(Date.now() - 12 * 60 * 60 * 1000).toISOString(),
                     max: new Date().toISOString(),
-                    ticks: { font: { size: 10 }, color: '#718096' }
+                    ticks: { font: { size: 9 }, color: '#94a3b8' },
+                    grid: { display: false }
                 },
                 y: {
-                    ticks: { font: { size: 10 }, color: '#718096', callback: function(v) { return v + '°C'; } }
+                    ticks: { font: { size: 9 }, color: '#94a3b8', callback: function(v) { return v + '°'; } },
+                    grid: { color: '#f0f2f5' }
                 }
             }
         }
@@ -304,7 +251,7 @@ function updateUI(devId, zone, val) {
     var leftPos = zone === 1 ? '32%' : '60%';
     var box = document.createElement('div');
     box.id = boxId;
-    // AJUSTE DE POSICIÓN: 'top' cambiado de 26.5% a 31% para bajar los cuadros un poco
+    // Mantenemos la posición 31% (un poco más abajo) solicitada anteriormente
     box.style.cssText = 'position:absolute;top:31%;width:16%;background:white;border-radius:5px;text-align:center;padding:5px 2px;box-shadow:0 2px 5px rgba(0,0,0,0.2);z-index:10;border:1.5px solid ' + color + ';left:' + leftPos + ';';
     box.innerHTML = '<div style="font-size:8px;color:#718096;font-weight:bold;">ZONA ' + zone + '</div>'
                   + '<div class="temp-val" style="font-size:15px;font-weight:bold;color:' + color + ';">' + val + '°</div>';
