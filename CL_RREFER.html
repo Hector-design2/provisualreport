@@ -19,11 +19,7 @@
 
 <script>
 var gApi, allDevices = [];
-
-// Almacenamiento de datos históricos por dispositivo para los gráficos
 var historyData = {};
-
-// Referencia a instancias Chart.js por dispositivo
 var chartInstances = {};
 
 geotab.addin.reeferProVisual = function() {
@@ -46,7 +42,6 @@ function setup(callback) {
 
         if (gruposFiltrados.length > 0) {
             var searchGroups = gruposFiltrados.map(function(g) { return { id: g.id }; });
-
             gApi.call('Get', {
                 typeName: 'Device',
                 search: { groups: searchGroups }
@@ -220,11 +215,7 @@ function fetchDeviceHistory(devId) {
 function renderChart(devId) {
     var canvas = document.getElementById('chart_' + devId);
     if (!canvas) return;
-
-    if (chartInstances[devId]) {
-        chartInstances[devId].destroy();
-        delete chartInstances[devId];
-    }
+    if (chartInstances[devId]) { chartInstances[devId].destroy(); delete chartInstances[devId]; }
 
     var z1 = historyData[devId].zone1;
     var z2 = historyData[devId].zone2;
@@ -249,7 +240,6 @@ function renderChart(devId) {
             backgroundColor: 'rgba(72,187,120,0.10)',
             borderWidth: 2,
             pointRadius: 0,
-            pointHoverRadius: 4,
             tension: 0.3,
             fill: true
         });
@@ -263,7 +253,6 @@ function renderChart(devId) {
             backgroundColor: 'rgba(66,153,225,0.10)',
             borderWidth: 2,
             pointRadius: 0,
-            pointHoverRadius: 4,
             tension: 0.3,
             fill: true
         });
@@ -275,18 +264,14 @@ function renderChart(devId) {
         options: {
             responsive: true,
             maintainAspectRatio: false,
-            animation: { duration: 400 },
-            interaction: { mode: 'index', intersect: false },
             plugins: {
-                legend: { position: 'top', labels: { font: { size: 11 }, boxWidth: 12, padding: 10 } },
+                legend: { position: 'top', labels: { font: { size: 11 }, boxWidth: 12 } },
                 tooltip: {
                     callbacks: {
                         title: function(items) {
-                            if (!items.length) return '';
                             var d = new Date(items[0].parsed.x);
-                            return d.getHours().toString().padStart(2, '0') + ':' + d.getMinutes().toString().padStart(2, '0') + '  ' + d.toLocaleDateString();
-                        },
-                        label: function(item) { return item.dataset.label + ': ' + item.parsed.y.toFixed(1) + ' °C'; }
+                            return d.getHours().toString().padStart(2, '0') + ':' + d.getMinutes().toString().padStart(2, '0');
+                        }
                     }
                 }
             },
@@ -296,12 +281,10 @@ function renderChart(devId) {
                     time: { unit: 'hour', displayFormats: { hour: 'HH:mm' } },
                     min: new Date(Date.now() - 12 * 60 * 60 * 1000).toISOString(),
                     max: new Date().toISOString(),
-                    ticks: { font: { size: 10 }, maxRotation: 0, color: '#718096' },
-                    grid: { color: 'rgba(0,0,0,0.04)' }
+                    ticks: { font: { size: 10 }, color: '#718096' }
                 },
                 y: {
-                    ticks: { font: { size: 10 }, color: '#718096', callback: function(v) { return v + '°C'; } },
-                    grid: { color: 'rgba(0,0,0,0.04)' }
+                    ticks: { font: { size: 10 }, color: '#718096', callback: function(v) { return v + '°C'; } }
                 }
             }
         }
@@ -321,7 +304,8 @@ function updateUI(devId, zone, val) {
     var leftPos = zone === 1 ? '32%' : '60%';
     var box = document.createElement('div');
     box.id = boxId;
-    box.style.cssText = 'position:absolute;top:26.5%;width:16%;background:white;border-radius:5px;text-align:center;padding:5px 2px;box-shadow:0 2px 5px rgba(0,0,0,0.2);z-index:10;border:1.5px solid ' + color + ';left:' + leftPos + ';';
+    // AJUSTE DE POSICIÓN: 'top' cambiado de 26.5% a 31% para bajar los cuadros un poco
+    box.style.cssText = 'position:absolute;top:31%;width:16%;background:white;border-radius:5px;text-align:center;padding:5px 2px;box-shadow:0 2px 5px rgba(0,0,0,0.2);z-index:10;border:1.5px solid ' + color + ';left:' + leftPos + ';';
     box.innerHTML = '<div style="font-size:8px;color:#718096;font-weight:bold;">ZONA ' + zone + '</div>'
                   + '<div class="temp-val" style="font-size:15px;font-weight:bold;color:' + color + ';">' + val + '°</div>';
     truck.appendChild(box);
